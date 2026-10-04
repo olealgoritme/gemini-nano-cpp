@@ -1,0 +1,10 @@
+# Build output and downloaded tools (see Makefile)
+/build/
+/third_party/
+
+# Google's proprietary files: never commit these
+*.so
+weights.bin
+
+# Python
+__pycache__/
