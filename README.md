@@ -240,13 +240,11 @@ What's supported:
 | `GET /v1/models` | lists `gemini-nano` |
 | `GET /healthz` | which backend and model are loaded, and the context size (`ctx`) |
 
-Options:
-
 | Option | Environment variable | Default | |
 |---|---|---|---|
 | `--port N` | `NANO_PORT` | `8765` | port to listen on |
 | `--host ADDR` | `NANO_HOST` | `127.0.0.1` | address to listen on |
-| `--ctx N` | `NANO_CTX` | `4096` | context window in tokens (prompt + reply) |
+| `--ctx N` | `NANO_CTX` | `4096` | how many tokens of conversation the model can read |
 
 Use `--host 0.0.0.0` to allow other computers on your network to connect
 (there's no password, so only do this on a network you trust).
@@ -263,44 +261,29 @@ reply = client.chat.completions.create(model="gemini-nano", messages=[{"role": "
 ]}])
 ```
 
-### Context size
+Requests are answered one at a time; others wait their turn.
 
-The model reads at most `--ctx` tokens at a time, prompt and reply together.
-The default of 4096 matches Chrome, but it's small: coding agents such as
-opencode send a system prompt and tool list that alone are bigger than that.
-Start the server with a larger window:
+### Longer conversations
+
+The model reads 4096 tokens at a time by default, the same as in Chrome. Chat
+apps and coding agents need more, so start the server with a bigger window:
 
 ```sh
 gnano-server --ctx 32768
 ```
 
-A longer window uses more memory and makes long prompts slower to read. It has
-been tested up to about 30,000 tokens. If a request is too long for the window,
-the server answers `400` with the error code `context_length_exceeded` (the
-same as OpenAI's API), so the client can shorten it. Prompt length is counted
-before generation, with a small safety margin. A reply that fills the window
-stops with `finish_reason: "length"`.
-
-### Several clients at once
-
-Any number of clients can connect at the same time. Requests are answered one
-at a time, in the order they arrive; the others wait their turn, and every
-request gets its answer. Waiting clients need a read timeout long enough to
-cover the requests ahead of them. Tool calling and audio aren't supported yet.
+If a request doesn't fit, the server answers `400` with `context_length_exceeded`.
 
 ### Use it with opencode
 
-[opencode](https://opencode.ai) can use the server as a custom provider. Add it
-to `~/.config/opencode/opencode.json` (or an `opencode.json` in your project),
-starting the server with `--ctx` as above and matching `context` here:
+Add this to `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "provider": {
     "gnano": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Gemini Nano (local)",
+      "name": "Gemini Nano",
       "options": { "baseURL": "http://127.0.0.1:8765/v1", "apiKey": "not-needed" },
       "models": {
         "gemini-nano": {
@@ -313,12 +296,8 @@ starting the server with `--ctx` as above and matching `context` here:
 }
 ```
 
-```sh
-opencode -m gnano/gemini-nano
-```
-
-Chat works. opencode's file and shell tools need tool calling, which the server
-doesn't support yet.
+Start the server with `gnano-server --ctx 32768`, then run
+`opencode -m gnano/gemini-nano`. Chat works; tool calling isn't supported.
 
 ---
 
