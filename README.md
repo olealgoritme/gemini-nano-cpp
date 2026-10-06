@@ -368,23 +368,6 @@ make distclean            # also remove the downloaded tools in third_party/
 
 You can run the programs without installing: `build/release/gnano hi`.
 
-| Path | What it is |
-|---|---|
-| `src/engine.cc`, `src/engine.h` | Everything that talks to Google's library: loading, chatting |
-| `src/main.cc` | `gnano`, the command-line program |
-| `src/image.cc`, `src/image.h` | Decodes image files (with stb_image) for `--image` |
-| `src/gemini_nano_model.h` | What the model is: architecture, tokenizer, file layout, and how each value is known |
-| `src/server.cc`, `src/json.h` | `gnano-server`, the OpenAI-compatible API |
-| `src/dawn/` | Builds Dawn and exposes its function table as `libnano_dawn.so` |
-| `scripts/download-model.py` | `gnano-download`, with the automated click |
-| `scripts/inspect-model.py` | Maps the model files' layout (`make inspect`) |
-| `scripts/verify-model.py` | Tests the model against the public Gemma 3n E2B (`make verify`) |
-| `chromium/include/` | Chromium's headers describing the library's API (plus two tiny stand-ins for Dawn headers) |
-| `chromium/libcxx-config/` | Chromium's settings for its C++ standard library |
-| `chromium/ref/` | Chromium source files showing how Chrome itself calls the library |
-| `build/` | Build output (not in git) |
-| `third_party/` | Downloaded build tools: clang, libc++, Dawn (not in git) |
-
 Where things live after installing:
 
 | | |
