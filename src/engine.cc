@@ -299,8 +299,9 @@ class ImageInput {
   std::vector<unsigned char*> refs_;
 };
 
-// Matches Chrome's model max_tokens; prompts plus replies must fit in it.
-constexpr uint32_t kMaxTokens = 4096;
+// Chrome's model max_tokens. Prompts plus replies must fit in the context
+// window; a longer prompt crashes the library, so --ctx raises it.
+constexpr uint32_t kDefaultContextTokens = 4096;
 
 }  // namespace
 
@@ -314,6 +315,10 @@ bool ResolveLoadOptions(LoadOptions* opts, std::string* err) {
   if (opts->backend.empty()) opts->backend = env("NANO_BACKEND");
   if (opts->backend.empty())
     opts->backend = FindModel(data + "/profile-gpu").empty() ? "cpu" : "gpu";
+  if (opts->context_tokens == 0) {
+    opts->context_tokens = static_cast<uint32_t>(atoi(env("NANO_CTX").c_str()));
+    if (opts->context_tokens == 0) opts->context_tokens = kDefaultContextTokens;
+  }
   if (opts->backend != "gpu" && opts->backend != "cpu") {
     *err = "NANO_BACKEND must be gpu or cpu";
     return false;
@@ -422,7 +427,7 @@ bool Engine::Load(const LoadOptions& opts, std::string* err) {
       .backend_type = gpu ? ml::ModelBackendType::kGpuBackend
                           : ml::ModelBackendType::kCpuBackend,
       .model_data = &data,
-      .max_tokens = kMaxTokens,
+      .max_tokens = opts_.context_tokens,
       .temperature = 0.0f,
       .top_k = 128,
       .adaptation_ranks = nullptr,
@@ -496,7 +501,7 @@ bool Engine::Generate(const std::vector<Message>& messages,
   ChromeMLAppendOptions aopts = {
       .input = input.data(),
       .input_size = input.size(),
-      .max_tokens = kMaxTokens,
+      .max_tokens = opts_.context_tokens,
       .context_saved_fn = &saved_fn,
       .input_source = InputSource::kUserInput,
   };
@@ -601,6 +606,24 @@ bool Engine::GetCapabilities(Capabilities* out, std::string* err) {
   out->image_input = caps.image_input;
   out->audio_input = caps.audio_input;
   return true;
+}
+
+int Engine::CountPromptTokens(const std::vector<Message>& messages,
+                              std::string* err) {
+  if (!have_tokenizer_) {
+    if (!GetTokenizer(&tokenizer_, err)) return -1;
+    have_tokenizer_ = true;
+  }
+  // Role marker, end marker and the newlines around them, rounded up.
+  constexpr int kMessageOverhead = 6;
+  // Gemma 3n encodes an image as 256 tokens.
+  constexpr int kImageTokens = 256;
+  int n = 1;  // the final "<model>" marker
+  for (const Message& m : messages) {
+    n += kMessageOverhead + static_cast<int>(m.images.size()) * kImageTokens;
+    n += static_cast<int>(tokenizer_.Encode(m.content).size());
+  }
+  return n;
 }
 
 std::vector<uint32_t> Tokenizer::Encode(const std::string& text) const {

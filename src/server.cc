@@ -94,10 +94,12 @@ void SendJson(int fd, int status, const std::string& body) {
                    "Connection: close\r\n\r\n" + body);
 }
 
-void SendError(int fd, int status, const std::string& message) {
+void SendError(int fd, int status, const std::string& message,
+               const char* code = nullptr) {
   SendJson(fd, status,
            "{\"error\":{\"message\":" + json::Quote(message) +
-               ",\"type\":\"invalid_request_error\"}}");
+               ",\"type\":\"invalid_request_error\"" +
+               (code ? std::string(",\"code\":\"") + code + "\"" : "") + "}}");
 }
 
 struct Request {
@@ -238,6 +240,29 @@ void HandleChat(int fd, const Request& req) {
     params.max_output_tokens = body["max_tokens"].n;
   bool stream = body["stream"].truthy();
 
+  // A prompt that doesn't fit the context window crashes the model library, so
+  // refuse it up front, before any response headers go out.
+  {
+    std::string terr;
+    pthread_mutex_lock(&g_engine_mu);
+    int prompt_tokens = g_engine.CountPromptTokens(messages, &terr);
+    pthread_mutex_unlock(&g_engine_mu);
+    if (prompt_tokens < 0) return SendError(fd, 500, terr);
+    uint32_t ctx = g_engine.options().context_tokens;
+    // The count is an estimate (a few tokens low), so keep some headroom.
+    constexpr uint32_t kHeadroom = 32;
+    if ((uint32_t)prompt_tokens + kHeadroom >= ctx) {
+      Log("chat rejected: prompt is ~%d tokens, context is %u", prompt_tokens, ctx);
+      return SendError(
+          fd, 400,
+          Fmt("This model's maximum context length is %u tokens, but the messages "
+              "take about %d. Reduce the messages, or restart gnano-server with a "
+              "larger --ctx.",
+              ctx, prompt_tokens),
+          "context_length_exceeded");
+    }
+  }
+
   pthread_mutex_lock(&g_id_mu);
   std::string id = Fmt("chatcmpl-%ld-%lu", (long)time(nullptr), g_next_id++);
   pthread_mutex_unlock(&g_id_mu);
@@ -275,7 +300,11 @@ void HandleChat(int fd, const Request& req) {
       &stats, &err);
   pthread_mutex_unlock(&g_engine_mu);
 
-  bool hit_limit = (uint32_t)stats.output_tokens >= params.max_output_tokens;
+  // The reply also ends when prompt + reply fill the context window.
+  bool hit_limit =
+      (uint32_t)stats.output_tokens >= params.max_output_tokens ||
+      (uint32_t)(stats.prompt_tokens + stats.output_tokens) + 1 >=
+          g_engine.options().context_tokens;
   const char* finish = hit_limit ? "length" : "stop";
   Log("chat %s: %s, %d prompt + %d reply tokens, %.1f tok/s", id.c_str(),
       ok ? finish : err.c_str(), stats.prompt_tokens, stats.output_tokens,
@@ -320,9 +349,12 @@ void* HandleConnection(void* arg) {
                  "\",\"object\":\"model\",\"created\":0,\"owned_by\":\"google\"}]}");
   } else if (req.method == "GET" && req.path == "/healthz") {
     const nano::LoadOptions& o = g_engine.options();
+    char ctx[16];
+    snprintf(ctx, sizeof(ctx), "%u", o.context_tokens);
     SendJson(fd, 200,
              "{\"ok\":true,\"backend\":" + json::Quote(o.backend) +
-                 ",\"model_dir\":" + json::Quote(o.model_dir) + "}");
+                 ",\"model_dir\":" + json::Quote(o.model_dir) +
+                 ",\"ctx\":" + ctx + "}");
   } else {
     SendError(fd, 404, "No route for " + req.method + " " + req.path);
   }
@@ -335,16 +367,21 @@ void* HandleConnection(void* arg) {
 int main(int argc, char** argv) {
   const char* host = getenv("NANO_HOST") ? getenv("NANO_HOST") : "127.0.0.1";
   int port = getenv("NANO_PORT") ? atoi(getenv("NANO_PORT")) : 8765;
+  uint32_t ctx = 0;  // 0: NANO_CTX, else 4096
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--port") && i + 1 < argc) {
       port = atoi(argv[++i]);
     } else if (!strcmp(argv[i], "--host") && i + 1 < argc) {
       host = argv[++i];
+    } else if (!strcmp(argv[i], "--ctx") && i + 1 < argc) {
+      ctx = static_cast<uint32_t>(atoi(argv[++i]));
     } else {
       fprintf(stderr,
-              "usage: %s [--host 127.0.0.1] [--port 8765]\n"
-              "Same NANO_* environment variables as gnano, plus NANO_HOST "
-              "and NANO_PORT.\n",
+              "usage: %s [--host 127.0.0.1] [--port 8765] [--ctx 4096]\n"
+              "  --ctx N  context window in tokens (prompt + reply); a prompt\n"
+              "           longer than this crashes the server\n"
+              "Same NANO_* environment variables as gnano, plus NANO_HOST, "
+              "NANO_PORT and NANO_CTX.\n",
               argv[0]);
       return 2;
     }
@@ -352,6 +389,7 @@ int main(int argc, char** argv) {
   signal(SIGPIPE, SIG_IGN);  // a client hanging up must not kill the server
 
   nano::LoadOptions opts;
+  opts.context_tokens = ctx;
   std::string err;
   if (!nano::ResolveLoadOptions(&opts, &err) || !g_engine.Load(opts, &err)) {
     fprintf(stderr, "%s\n", err.c_str());

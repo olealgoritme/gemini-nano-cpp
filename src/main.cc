@@ -43,6 +43,7 @@ void Usage(const char* argv0) {
           "                  downloaded, else cpu)\n"
           "  NANO_HOME       folder holding the models and lib/ (default:\n"
           "                  ~/.local/share/gemini-nano)\n"
+          "  NANO_CTX        context window in tokens (default: 4096)\n"
           "  NANO_MODEL_DIR  folder holding weights.bin\n"
           "  NANO_LIB        liboptimization_guide_internal.so\n"
           "  NANO_DAWN_LIB   our Dawn build (libnano_dawn.so)\n",

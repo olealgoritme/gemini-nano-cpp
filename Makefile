@@ -79,13 +79,16 @@ $(STB):
 
 # Dawn (WebGPU) for the GPU backend. Chrome compiles it into the chrome binary,
 # so we build the same revision and expose its proc table (src/dawn/). It is
-# always built optimized, once, and copied into each build folder.
+# always built optimized, once, and copied into each build folder. Dawn builds
+# its own bundled Vulkan headers, so a system VulkanHeaders package is never
+# used (and its version mismatch warning is silenced).
 $(BUILD)/libnano_dawn.so: src/dawn/shim.cc src/dawn/CMakeLists.txt | $(CXX) $(TP)/dawn/CMakeLists.txt
 	@echo "==> Building Dawn (one-time, a few minutes)..."
 	cmake -S src/dawn -B $(TP)/dawn-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 	  -DDAWN_SRC="$(CURDIR)/$(TP)/dawn" \
 	  -DCMAKE_C_COMPILER="$(CURDIR)/$(TP)/clang/bin/clang" \
-	  -DCMAKE_CXX_COMPILER="$(CURDIR)/$(CXX)" >/dev/null
+	  -DCMAKE_CXX_COMPILER="$(CURDIR)/$(CXX)" \
+	  -DCMAKE_DISABLE_FIND_PACKAGE_VulkanHeaders=TRUE >/dev/null
 	ninja -C $(TP)/dawn-build nano_dawn
 	@mkdir -p $(BUILD)
 	cp $(TP)/dawn-build/libnano_dawn.so $@

@@ -31,6 +31,7 @@ struct LoadOptions {
   std::string model_dir;  // folder holding weights.bin
   std::string lib_path;   // liboptimization_guide_internal.so
   std::string dawn_path;  // libnano_dawn.so (GPU only)
+  uint32_t context_tokens = 0;  // prompt + reply budget; 0 = NANO_CTX or 4096
 };
 
 // Fills unset LoadOptions from NANO_* environment variables, the per-user data
@@ -94,6 +95,11 @@ class Engine {
 
   bool GetTokenizer(Tokenizer* out, std::string* err);
 
+  // How many tokens `messages` take in the context window: exact for text, an
+  // estimate for images and the role markers. Returns -1 (with `err`) if the
+  // tokenizer is unavailable. Not thread-safe: callers must serialize calls.
+  int CountPromptTokens(const std::vector<Message>& messages, std::string* err);
+
   // What the library says the model file supports (GetCapabilities).
   struct Capabilities {
     bool image_input = false;
@@ -107,6 +113,8 @@ class Engine {
   LoadOptions opts_;
   const ChromeMLAPI* api_ = nullptr;
   uintptr_t model_ = 0;
+  Tokenizer tokenizer_;  // filled by the first CountPromptTokens
+  bool have_tokenizer_ = false;
 };
 
 }  // namespace nano
